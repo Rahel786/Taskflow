@@ -1,72 +1,46 @@
-// server.js - Express Backend for Task Tracker
+// server.js - Express Backend with MongoDB
 const express = require('express');
-const fs = require('fs').promises;
-const path = require('path');
+const mongoose = require('mongoose');
 const cors = require('cors');
-
 const nodemailer = require('nodemailer');
 const schedule = require('node-schedule');
-
-const app = express();
 require('dotenv').config();
 
+const app = express();
 const PORT = process.env.PORT || 5000;
-const TASKS_FILE = path.join(__dirname, 'tasks.json');
+const MONGODB_URI = process.env.MONGODB_URI;
 
 app.use(cors());
 app.use(express.json());
 
-// Initialize tasks file
-async function initTasksFile() {
-  try {
-    await fs.access(TASKS_FILE);
-  } catch {
-    await fs.writeFile(TASKS_FILE, JSON.stringify([], null, 2));
-  }
-}
+// ===== MONGODB CONNECTION =====
+mongoose.connect(MONGODB_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch((err) => {
+    console.error('❌ MongoDB connection error:', err);
+    process.exit(1);
+  });
 
-// Read tasks from JSON
-async function getTasks() {
-  const data = await fs.readFile(TASKS_FILE, 'utf-8');
-  return JSON.parse(data);
-}
+// ===== TASK SCHEMA =====
+const taskSchema = new mongoose.Schema({
+  description: String,
+  category: String,
+  priority: String,
+  status: { type: String, default: 'todo' },
+  deadline: Date,
+  calendarEventId: String
+}, { timestamps: true });
 
-// GET monthly stats
-app.get('/api/stats/monthly', async (req, res) => {
-  try {
-    const tasks = await getTasks();
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    const monthlyTasks = tasks.filter(t => {
-      const taskDate = new Date(t.updatedAt);
-      return taskDate.getMonth() === currentMonth && 
-             taskDate.getFullYear() === currentYear;
-    });
-
-    const stats = {
-      total: monthlyTasks.length,
-      completed: monthlyTasks.filter(t => t.status === 'done').length,
-      byCategory: {
-        Personal: monthlyTasks.filter(t => t.category === 'Personal' && t.status === 'done').length,
-        Work: monthlyTasks.filter(t => t.category === 'Work' && t.status === 'done').length,
-        Fitness: monthlyTasks.filter(t => t.category === 'Fitness' && t.status === 'done').length
-      }
-    };
-
-    res.json(stats);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+taskSchema.set('toJSON', {
+  virtuals: true,
+  versionKey: false,
+  transform: (doc, ret) => {
+    ret.id = ret._id;
+    delete ret._id;
   }
 });
 
-// Write tasks to JSON
-async function saveTasks(tasks) {
-  await fs.writeFile(TASKS_FILE, JSON.stringify(tasks, null, 2));
-}
-
-
+const Task = mongoose.model('Task', taskSchema);
 
 // ===== EMAIL SETUP =====
 const transporter = nodemailer.createTransport({
@@ -86,82 +60,56 @@ transporter.verify((error, success) => {
   }
 });
 
-// Schedule daily email at 6:00 AM
-async function scheduleDailyEmail() {
-  schedule.scheduleJob('0 6 * * *', async () => {
-    try {
-      const tasks = await getTasks();
-      
-      const pendingTasks = tasks.filter(t => 
-        t.status === 'todo' || t.status === 'in-progress'
-      );
-
-      if (pendingTasks.length === 0) {
-        console.log('No pending tasks to remind about');
-        return;
-      }
-
-      const taskList = pendingTasks
-        .map(t => `- ${t.description} (${t.category} - ${t.priority} priority)`)
-        .join('\n');
-
-      const emailContent = `
-Here are your pending tasks for tonight:
-
-${taskList}
-
-Total pending tasks: ${pendingTasks.length}
-
-Don't forget to complete them!
-Task Tracker
-      `;
-
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: process.env.USER_EMAIL,
-        subject: `📋 Task Reminder - ${pendingTasks.length} tasks pending`,
-        text: emailContent,
-        html: `
-          <h2>Evening Reminder 🌙</h2>
-          <p>Here are your pending tasks:</p>
-          <ul>
-            ${pendingTasks.map(t => 
-              `<li><strong>${t.description}</strong> (${t.category} - ${t.priority})</li>`
-            ).join('')}
-          </ul>
-          <p><strong>Total pending tasks: ${pendingTasks.length}</strong></p>
-          <p>Don't forget to complete them!</p>
-        `
-      });
-
-      console.log(`✅ Daily reminder email sent at 6:00 AM`);
-    } catch (err) {
-      console.error('Error sending email:', err);
-    }
-  });
-}
-
-// Optional: Send immediate test email
-async function sendTestEmail() {
+// ===== FUNCTION: Send Reminder Email =====
+async function sendDailyEmail() {
   try {
+    const tasks = await Task.find({ status: { $in: ['todo', 'in-progress'] } });
+
+    if (tasks.length === 0) {
+      console.log('ℹ️ No pending tasks for today');
+      return;
+    }
+
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: `"Task Tracker" <${process.env.EMAIL_USER}>`,
       to: process.env.USER_EMAIL,
-      subject: 'Test Email - Task Tracker',
-      text: 'If you see this, email configuration is working!'
+      subject: `📋 Task Reminder - ${tasks.length} tasks pending`,
+      html: `
+        <h2>Evening Reminder 🌙</h2>
+        <p>Here are your pending tasks:</p>
+        <ul>${tasks.map(t => `<li>${t.description}</li>`).join('')}</ul>
+      `
     });
-    console.log('✅ Test email sent successfully');
+
+    console.log('✅ Daily reminder email sent successfully');
   } catch (err) {
-    console.error('❌ Test email failed:', err.message);
+    console.error('❌ Failed to send daily email:', err.message);
   }
 }
 
+// ===== CRON JOB: Every day at 9:00 PM =====
+// Cron syntax: '0 21 * * *' → 9:00 PM daily
+schedule.scheduleJob('0 21 * * *', async () => {
+  console.log('🕘 Running scheduled task: Daily reminder email');
+  await sendDailyEmail();
+});
+
 // ===== ROUTES =====
+
+// Trigger manually if needed
+app.get('/api/send-daily-email', async (req, res) => {
+  try {
+    await sendDailyEmail();
+    res.json({ success: true, message: 'Manual email sent' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // GET all tasks
 app.get('/api/tasks', async (req, res) => {
   try {
-    const tasks = await getTasks();
+    const tasks = await Task.find().sort({ createdAt: -1 });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -171,26 +119,9 @@ app.get('/api/tasks', async (req, res) => {
 // POST create task
 app.post('/api/tasks', async (req, res) => {
   try {
-    const tasks = await getTasks();
-    const newTask = {
-      id: Date.now(),
-      description: req.body.description,
-      category: req.body.category,
-      priority: req.body.priority,
-      status: 'todo',
-      deadline: req.body.deadline || null,
-      calendarEventId: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    if (newTask.deadline) {
-      // Calendar event creation removed
-    }
-
-    tasks.push(newTask);
-    await saveTasks(tasks);
-    res.status(201).json(newTask);
+    const newTask = new Task(req.body);
+    const savedTask = await newTask.save();
+    res.status(201).json(savedTask.toJSON());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -199,23 +130,9 @@ app.post('/api/tasks', async (req, res) => {
 // PUT update task
 app.put('/api/tasks/:id', async (req, res) => {
   try {
-    const tasks = await getTasks();
-    const taskIndex = tasks.findIndex(t => t.id == req.params.id);
-
-    if (taskIndex === -1) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    const task = tasks[taskIndex];
-    Object.assign(task, req.body, { updatedAt: new Date().toISOString() });
-
-    if (req.body.deadline && !task.calendarEventId) {
-      // Calendar event creation removed
-    }
-
-    tasks[taskIndex] = task;
-    await saveTasks(tasks);
-    res.json(task);
+    const updatedTask = await Task.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!updatedTask) return res.status(404).json({ error: 'Task not found' });
+    res.json(updatedTask.toJSON());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -224,9 +141,8 @@ app.put('/api/tasks/:id', async (req, res) => {
 // DELETE task
 app.delete('/api/tasks/:id', async (req, res) => {
   try {
-    const tasks = await getTasks();
-    const filtered = tasks.filter(t => t.id != req.params.id);
-    await saveTasks(filtered);
+    const deletedTask = await Task.findByIdAndDelete(req.params.id);
+    if (!deletedTask) return res.status(404).json({ error: 'Task not found' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -236,28 +152,18 @@ app.delete('/api/tasks/:id', async (req, res) => {
 // PATCH change task status
 app.patch('/api/tasks/:id/status', async (req, res) => {
   try {
-    const tasks = await getTasks();
-    const task = tasks.find(t => t.id == req.params.id);
-
-    if (!task) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    task.status = req.body.status;
-    task.updatedAt = new Date().toISOString();
-    await saveTasks(tasks);
-    res.json(task);
+    const updatedTask = await Task.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
+    if (!updatedTask) return res.status(404).json({ error: 'Task not found' });
+    res.json(updatedTask.toJSON());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Start server
-app.listen(PORT, async () => {
-  await initTasksFile();
-  scheduleDailyEmail();
+// ===== START SERVER =====
+app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📧 Daily email reminder scheduled for 6:00 AM`);
+  console.log('⏰ Cron job scheduled for 9:00 PM daily');
 });
 
 module.exports = app;
