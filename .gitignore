@@ -5,13 +5,13 @@ node_modules/
 logs
 *.log
 
-# Env files
+# Environment files
 .env
+frontend/.env
+backend/.env
 
 # Build files
 frontend/build
-frontend/.env
-backend/.env
 
 # OS-specific files
 .DS_Store
