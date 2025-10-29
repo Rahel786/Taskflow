@@ -8,6 +8,7 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
+const CRON_SECRET = process.env.CRON_SECRET;
 
 app.use(cors());
 app.use(express.json());
@@ -122,7 +123,7 @@ async function sendDailyEmail() {
 app.get('/api/cron/daily-reminder', async (req, res) => {
   try {
     // Security check
-    const cronSecret = process.env.CRON_SECRET || 'Rahel786';
+    const cronSecret = CRON_SECRET || 'Rahel786';
     if (req.query.token !== cronSecret) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
@@ -226,8 +227,8 @@ app.patch('/api/tasks/:id/status', async (req, res) => {
 // ===== START SERVER =====
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log('🌐 Cron endpoint: /api/cron/daily-reminder?token=${CRON_SECRET}');
-  console.log('🏥 Health endpoint: /api/health');
+  console.log(`🌐 Cron endpoint: /api/cron/daily-reminder?token=${CRON_SECRET}`);
+  console.log(`🏥 Health endpoint: /api/health`);
 });
 
 module.exports = app;
