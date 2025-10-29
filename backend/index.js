@@ -42,18 +42,37 @@ taskSchema.set('toJSON', {
 const Task = mongoose.model('Task', taskSchema);
 
 // ===== EMAIL SETUP =====
+// Option 1: Gmail with App Password
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASSWORD
+  },
+  // Add these for better Gmail compatibility
+  port: 587,
+  secure: false, // use TLS
+  tls: {
+    rejectUnauthorized: false
   }
 });
+
+// Option 2: SendGrid (uncomment to use)
+// const transporter = nodemailer.createTransport({
+//   host: 'smtp.sendgrid.net',
+//   port: 587,
+//   secure: false,
+//   auth: {
+//     user: 'apikey',
+//     pass: process.env.SENDGRID_API_KEY
+//   }
+// });
 
 // Verify email configuration
 transporter.verify((error, success) => {
   if (error) {
     console.log('⚠️ Email configuration error:', error.message);
+    console.log('💡 Make sure you are using a Gmail App Password, not your regular password');
   } else if (success) {
     console.log('✅ Email service ready');
   }
@@ -63,6 +82,13 @@ transporter.verify((error, success) => {
 async function sendDailyEmail() {
   try {
     console.log('📧 Starting daily email process...');
+    
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.error('❌ MongoDB not connected, attempting to reconnect...');
+      await mongoose.connect(MONGODB_URI);
+    }
+    
     const tasks = await Task.find({ status: { $in: ['todo', 'in-progress'] } });
 
     if (tasks.length === 0) {
@@ -77,7 +103,8 @@ async function sendDailyEmail() {
       html: `
         <h2>Evening Reminder 🌙</h2>
         <p>Here are your pending tasks:</p>
-        <ul>${tasks.map(t => `<li>${t.description}</li>`).join('')}</ul>
+        <ul>${tasks.map(t => `<li><strong>${t.priority}</strong>: ${t.description}</li>`).join('')}</ul>
+        <p><small>Sent at ${new Date().toLocaleString()}</small></p>
       `
     });
 
@@ -122,8 +149,14 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
+});
+
+// Ping endpoint (minimal resource usage for keeping alive)
+app.get('/ping', (req, res) => {
+  res.send('pong');
 });
 
 // Manual trigger endpoint (for testing - waits for completion)
