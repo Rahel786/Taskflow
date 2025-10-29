@@ -62,6 +62,7 @@ transporter.verify((error, success) => {
 // ===== FUNCTION: Send Reminder Email =====
 async function sendDailyEmail() {
   try {
+    console.log('📧 Starting daily email process...');
     const tasks = await Task.find({ status: { $in: ['todo', 'in-progress'] } });
 
     if (tasks.length === 0) {
@@ -90,24 +91,42 @@ async function sendDailyEmail() {
 
 // ===== ROUTES =====
 
-// 🎯 MAIN ENDPOINT FOR CRON-JOB.ORG
-// This is the URL you'll configure on cron-job.org
+// 🎯 MAIN ENDPOINT FOR CRON-JOB.ORG (OPTIMIZED FOR FAST RESPONSE)
 app.get('/api/cron/daily-reminder', async (req, res) => {
   try {
-    // Optional: Add a secret token for security
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && req.query.token !== cronSecret) {
+    // Security check
+    const cronSecret = process.env.CRON_SECRET || 'Rahel786';
+    if (req.query.token !== cronSecret) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    const result = await sendDailyEmail();
-    res.json(result);
+    // ✅ RESPOND IMMEDIATELY - Don't wait for email to send
+    res.status(202).json({ 
+      success: true, 
+      message: 'Daily reminder triggered',
+      timestamp: new Date().toISOString()
+    });
+
+    // 📧 Process email asynchronously (after response is sent)
+    sendDailyEmail()
+      .then(result => console.log('✅ Email process completed:', result))
+      .catch(err => console.error('❌ Email process failed:', err.message));
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Manual trigger endpoint (for testing)
+// Health check endpoint (for keeping server warm)
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Manual trigger endpoint (for testing - waits for completion)
 app.get('/api/send-daily-email', async (req, res) => {
   try {
     const result = await sendDailyEmail();
@@ -174,7 +193,8 @@ app.patch('/api/tasks/:id/status', async (req, res) => {
 // ===== START SERVER =====
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log('🌐 Cron endpoint: /api/cron/daily-reminder');
+  console.log('🌐 Cron endpoint: /api/cron/daily-reminder?token=${CRON_SECRET}');
+  console.log('🏥 Health endpoint: /api/health');
 });
 
 module.exports = app;
