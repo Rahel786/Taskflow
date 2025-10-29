@@ -1,9 +1,8 @@
-// server.js - Express Backend with MongoDB
+// server.js - Express Backend with MongoDB (cron-job.org compatible)
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
-const schedule = require('node-schedule');
 require('dotenv').config();
 
 const app = express();
@@ -67,7 +66,7 @@ async function sendDailyEmail() {
 
     if (tasks.length === 0) {
       console.log('ℹ️ No pending tasks for today');
-      return;
+      return { success: true, message: 'No pending tasks' };
     }
 
     await transporter.sendMail({
@@ -82,25 +81,37 @@ async function sendDailyEmail() {
     });
 
     console.log('✅ Daily reminder email sent successfully');
+    return { success: true, message: `Email sent with ${tasks.length} tasks` };
   } catch (err) {
     console.error('❌ Failed to send daily email:', err.message);
+    throw err;
   }
 }
 
-// ===== CRON JOB: Every day at 9:00 PM =====
-// Cron syntax: '0 21 * * *' → 9:00 PM daily
-schedule.scheduleJob('0 21 * * *', async () => {
-  console.log('🕘 Running scheduled task: Daily reminder email');
-  await sendDailyEmail();
-});
-
 // ===== ROUTES =====
 
-// Trigger manually if needed
+// 🎯 MAIN ENDPOINT FOR CRON-JOB.ORG
+// This is the URL you'll configure on cron-job.org
+app.get('/api/cron/daily-reminder', async (req, res) => {
+  try {
+    // Optional: Add a secret token for security
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && req.query.token !== cronSecret) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const result = await sendDailyEmail();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Manual trigger endpoint (for testing)
 app.get('/api/send-daily-email', async (req, res) => {
   try {
-    await sendDailyEmail();
-    res.json({ success: true, message: 'Manual email sent' });
+    const result = await sendDailyEmail();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -163,7 +174,7 @@ app.patch('/api/tasks/:id/status', async (req, res) => {
 // ===== START SERVER =====
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log('⏰ Cron job scheduled for 9:00 PM daily');
+  console.log('🌐 Cron endpoint: /api/cron/daily-reminder');
 });
 
 module.exports = app;

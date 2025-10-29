@@ -90,7 +90,7 @@ export default function App1() {
       setEditingId(null);
     } catch (err) {
       console.error('Failed to update task:', err);
-    //   alert('Failed to update task. Please try again.');
+      alert('Failed to update task. Please try again.');
     }
   };
 
@@ -110,7 +110,7 @@ export default function App1() {
       setTasks(tasks.map(t => t.id === id ? updated : t));
     } catch (err) {
       console.error('Failed to update task status:', err);
-    //   alert('Failed to update task status. Please try again.');
+      alert('Failed to update task status. Please try again.');
     }
   };
 
